@@ -1,0 +1,1 @@
+export { runProgram } from '@/commands';

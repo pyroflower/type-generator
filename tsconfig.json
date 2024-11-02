@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "target": "es2018",
+    "moduleResolution": "node",
+    "outDir": "./build",
+    "baseUrl": "./",
+    "noImplicitAny": false,
+    "allowSyntheticDefaultImports": true,
+    "removeComments": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "typeRoots": ["node_modules/@types", "./src/typings"],
+    "paths": {
+      "*": ["node_modules/*", "types/*"],
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*", "index.d.ts"]
+}
