@@ -1,11 +1,11 @@
 /* eslint-disable import/no-extraneous-dependencies */
 import { expect } from '@jest/globals';
-import { TSchema } from '@sinclair/typebox';
+import { Kind, OptionalKind, TSchema } from '@sinclair/typebox';
 import type { MatcherFunction } from 'expect';
 import 'jest-expect-message';
 import { getAjv } from './ajv';
-import isEqual from 'lodash.isequal';
-import reduce from 'lodash.reduce';
+import isEqual from 'lodash/isequal';
+import sortBy from 'lodash/sortBy';
 
 const toMatchSchema: MatcherFunction<
   [schemaDefinition: TSchema, options?: { message?: string }]
@@ -105,12 +105,23 @@ function deepEqual(obj1, obj2) {
 
   if (Object.keys(obj1).length !== Object.keys(obj2).length) return false;
 
+  // Handle arrays - order doesn't matter
+  if (Array.isArray(obj1) && Array.isArray(obj2)) {
+    if (obj1.length !== obj2.length) return false;
+
+    if (!isEqual(sortBy(obj1, ['type']), sortBy(obj2, ['type']))) return false;
+    return true;
+  }
+
   // compare objects with same number of keys
   for (let key in obj1) {
     if (!(key in obj2)) return false; //other object doesn't have this prop
 
     if (!deepEqual(obj1[key], obj2[key])) return false;
   }
+
+  if (obj1[Kind] !== obj2[Kind]) return false;
+  if (obj1[OptionalKind] !== obj2[OptionalKind]) return false;
 
   return true;
 }

@@ -1,7 +1,16 @@
-import type { Primitive, TypeGeneratorConfiguration } from './types';
+import type {
+  ObjectTypes,
+  Primitive,
+  TypeGeneratorConfiguration,
+} from './types';
 import { TSchema, Type } from '@sinclair/typebox';
+import { mergeTypes } from './utils/mergeTypes';
+import cloneDeep from 'lodash/cloneDeep';
 
-function convertToTypeboxSchema(input: Primitive) {
+function convertToTypeboxSchema(
+  input: Primitive | ObjectTypes,
+  config?: TypeGeneratorConfiguration
+) {
   switch (typeof input) {
     case 'string':
       return Type.String();
@@ -14,26 +23,51 @@ function convertToTypeboxSchema(input: Primitive) {
       return Type.Boolean();
     case 'object':
       return Array.isArray(input)
-        ? Type.Array(Type.Unknown())
+        ? convertToTypeboxArrayType(input)
         : null === input
         ? Type.Null()
-        : Type.Object({});
+        : convertToTypeboxObjectType(input);
     default:
       return Type.Any();
   }
 }
 
-function mergeTypes<T extends TSchema, U extends TSchema>(
-  typeOne: T,
-  typeTwo: U
-) {
-  if (deepEqual(typeOne, typeTwo)) return typeOne;
-  return Type.Union([typeOne, typeTwo]);
+function convertToTypeboxArrayType(input: Array<unknown>) {
+  if (input.length === 0) {
+    return Type.Array(Type.Unknown());
+  }
+
+  const schemas = input.map((item) => convertToTypeboxSchema(item as any));
+  const unionType = schemas.reduce((prev, curr) => mergeTypes(prev, curr));
+  return Type.Array(unionType);
+}
+
+function convertToTypeboxObjectType<T extends object>(input: T) {
+  const keys = Object.keys(input);
+
+  const newObj = {} as Record<string | number, TSchema>;
+
+  keys.forEach((key) => {
+    newObj[key] = convertToTypeboxSchema(input[key]);
+  });
+
+  return Type.Object(newObj);
 }
 
 export class TypeGenerator {
+  static convertToTypeboxSchema(
+    input: Parameters<typeof convertToTypeboxSchema>[0]
+  ) {
+    return convertToTypeboxSchema(input);
+  }
+
+  static mergeTypes(...args: Parameters<typeof mergeTypes>) {
+    return mergeTypes(...args);
+  }
+
   readonly literalKeys: TypeGeneratorConfiguration['literalKeys'] = [];
   result: TypeGeneratorConfiguration['currentSchema'] = {};
+  private isFirstObjectAdded = false;
   constructor(config?: TypeGeneratorConfiguration) {
     if (config?.literalKeys) {
       this.literalKeys = config.literalKeys;
@@ -41,48 +75,89 @@ export class TypeGenerator {
   }
 
   addObject(obj: Record<string | number, any>) {
-    Object.keys(obj).reduce((prev, curr) => {
-      // Already has info about key
-      if (prev[curr]) {
-        prev[curr] = mergeTypes(prev[curr], convertToTypeboxSchema(obj[curr]));
-      } else {
-        prev[curr] = this.literalKeys.includes(curr)
-          ? Type.Literal(obj[curr])
-          : convertToTypeboxSchema(obj[curr]);
-      }
-
-      return prev;
-    }, this.result);
-    return this.result;
+    if (this.isFirstObjectAdded) {
+      return this.addAdditionalObject(obj);
+    }
+    return this.addFirstObject(obj);
   }
 
   produce() {
-    return Type.Object(this.result);
-  }
-}
-
-function deepEqual(obj1, obj2) {
-  if (obj1 === obj2)
-    // it's just the same object. No need to compare.
-    return true;
-
-  if (isPrimitive(obj1) && isPrimitive(obj2))
-    // compare primitives
-    return obj1 === obj2;
-
-  if (Object.keys(obj1).length !== Object.keys(obj2).length) return false;
-
-  // compare objects with same number of keys
-  for (let key in obj1) {
-    if (!(key in obj2)) return false; //other object doesn't have this prop
-
-    if (!deepEqual(obj1[key], obj2[key])) return false;
+    return Type.Object(cloneDeep(this.result));
   }
 
-  return true;
-}
+  private addFirstObject(obj: Record<string | number, any>) {
+    const objectKeys = Object.keys(obj);
+    objectKeys.reduce((prev, curr) => {
+      if (
+        typeof obj[curr] === 'object' &&
+        !Array.isArray(obj[curr]) &&
+        null !== obj[curr]
+      ) {
+        // is object
+        if (this.literalKeys.includes(curr)) {
+          // curr is a literal key
+          const lTypeGenerator = new TypeGenerator({
+            literalKeys: this.literalKeys,
+          });
+          lTypeGenerator.addObject(obj[curr]);
+          prev[curr] = lTypeGenerator.produce();
+          return prev;
+        }
+      }
+      prev[curr] = this.literalKeys.includes(curr)
+        ? Type.Literal(obj[curr])
+        : convertToTypeboxSchema(obj[curr]);
+      return prev;
+    }, this.result);
 
-//check if value is primitive
-function isPrimitive(obj) {
-  return obj !== Object(obj);
+    this.isFirstObjectAdded = true;
+    return this.result;
+  }
+
+  private addAdditionalObject(obj: Record<string | number, any>) {
+    const objectKeys = Object.keys(obj);
+    const resultKeys = Object.keys(this.result);
+    const missingKeys = resultKeys.filter((v) => !(v in obj));
+
+    missingKeys.forEach((key) => {
+      if (this.result[key]) {
+        this.result[key] = Type.Optional(this.result[key]);
+      }
+    });
+
+    objectKeys.reduce((prev, curr) => {
+      if (prev[curr]) {
+        if (
+          typeof obj[curr] === 'object' &&
+          !Array.isArray(obj[curr]) &&
+          null !== obj[curr]
+        ) {
+          // is object
+          const lTypeGenerator = new TypeGenerator({
+            literalKeys: this.literalKeys,
+          });
+          lTypeGenerator.addObject(obj[curr]);
+          prev[curr] = mergeTypes(prev[curr], lTypeGenerator.produce());
+        } else {
+          if (this.literalKeys.includes(curr)) {
+            prev[curr] = mergeTypes(prev[curr], Type.Literal(obj[curr]));
+          } else {
+            prev[curr] = mergeTypes(
+              prev[curr],
+              convertToTypeboxSchema(obj[curr])
+            );
+          }
+        }
+      } else {
+        prev[curr] = Type.Optional(
+          this.literalKeys.includes(curr)
+            ? Type.Literal(obj[curr])
+            : convertToTypeboxSchema(obj[curr])
+        );
+      }
+      return prev;
+    }, this.result);
+
+    return this.result;
+  }
 }
